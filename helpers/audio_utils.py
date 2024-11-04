@@ -2,8 +2,9 @@ import torch
 import torchaudio
 import numpy as np
 from scipy import signal
-from typing import Union
-from typing import Tuple
+from pathlib import Path
+from scipy.io import wavfile
+from typing import Union, Tuple
 
 
 def standard_scale(x: torch.Tensor) -> torch.Tensor:
@@ -129,3 +130,23 @@ def compute_mel_spectrogram(
     mel_spec_db = torchaudio.transforms.AmplitudeToDB()(mel_spec)
     mel_spec_db = mel_spec_db.squeeze().numpy()
     return mel_spec_db
+
+
+def save_wave_to_wav(
+    wave: np.ndarray,
+    sample_rate: int,
+    filedir: Path,
+    filename: str,
+    volume: float = 1.0,
+) -> None:
+    wave = min_max_scale(wave.astype(np.float32))
+    wave = wave * volume
+
+    wave = np.clip(wave, -1.0, 1.0)
+    wave_int16 = np.int16(wave * 32767)
+
+    filename += ".wav"
+    file = filedir.joinpath(filename)
+
+    wavfile.write(str(file), sample_rate, wave_int16)
+    print(f"El archivo '{filename}' se ha guardado exitosamente en:\n{filedir}")
