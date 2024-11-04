@@ -1,10 +1,11 @@
 import torch
 import numpy as np
+import seaborn as sns
 from typing import Union
-from torch import no_grad
 import matplotlib.pyplot as plt
 from scipy.signal import spectrogram
 from helpers import audio_utils as AU
+from helpers.predictions import get_all_predictions, compute_confusion_matrix
 
 
 def plot_waveform(audio: np.array, sample_rate: int, ax: plt.Axes) -> None:
@@ -136,21 +137,85 @@ def compare_audios(
 
 def plot_model_result(trained_model, dataset, index):
     trained_model.eval()
-    with no_grad():
-        mobile, stethos = dataset[index]
-        model_result = trained_model(mobile.unsqueeze(0))
+    with torch.no_grad():
+        audio, mel_spec, label = dataset[index]
 
-        fig, axs = plt.subplots(3, 1, figsize=(15, 10))
-        axs[0].plot(mobile.squeeze())
-        axs[0].set_title("Celular")
+        input_data = mel_spec.view([1, -1, mel_spec.shape[0], mel_spec.shape[1]])
 
-        axs[1].plot(stethos.squeeze())
-        axs[1].set_title("Estetoscopio")
+        outputs = trained_model(input_data)
+        probabilities = torch.softmax(outputs, dim=1)
+        _, predicted = torch.max(probabilities, 1)
 
-        axs[2].plot(model_result.squeeze())
-        axs[2].set_title("Modelo")
+        idx_to_label = dataset.dataset.idx_to_label
+        actual_label_name = idx_to_label[int(label)]
+        predicted_label_name = idx_to_label[int(predicted)]
 
-        plt.tight_layout()
+        fig, axs = plt.subplots(2, 1, figsize=(12, 8))
+
+        axs[0].plot(audio.squeeze().cpu().numpy())
+        axs[0].set_title("Forma de onda del audio")
+        axs[0].set_xlabel("Tiempo")
+        axs[0].set_ylabel("Amplitud")
+
+        axs[1].imshow(
+            mel_spec.squeeze().cpu().numpy(),
+            origin="lower",
+            aspect="auto",
+            cmap="Blues",
+        )
+        axs[1].set_title("Espectrograma de Mel")
+        axs[1].set_xlabel("Tiempo")
+        axs[1].set_ylabel("Frecuencia Mel")
+
+        is_correct = actual_label_name == predicted_label_name
+        suptitle = "Correcto!\n" if is_correct else "Incorrecto:\n"
+        suptitle += (
+            predicted_label_name
+            if is_correct
+            else f"Predicción del modelo: {predicted_label_name}"
+        )
+        suptitle += "" if is_correct else f"\nEtiqueta real: {actual_label_name}"
+
+        plt.suptitle(suptitle, fontsize=16)
+
+        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
         plt.show()
 
-        return model_result
+        return probabilities
+
+
+def plot_confusion_matrix(trained_model, dataloader):
+
+    all_preds, all_labels = get_all_predictions(trained_model, dataloader)
+
+    classes_dict = dataloader.dataset.dataset.idx_to_label
+    n_classes = classes_dict.__len__()
+    class_names = list(classes_dict.values())
+
+    cm, cm_normalized = compute_confusion_matrix(all_labels, all_preds, n_classes)
+    accuracy = np.trace(cm) / np.sum(cm) * 100
+
+    flatten_cms = zip(cm.flatten(), cm_normalized.flatten())
+    labels = np.array(
+        [f"{value}\n{percentage:.1f}%" for value, percentage in flatten_cms]
+    )
+    labels = labels.reshape(cm.shape)
+
+    annot_kws = {"color": "white", "fontsize": 10, "alpha": 1}
+
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(
+        cm_normalized,
+        annot=labels,
+        fmt="",
+        cmap="Blues",
+        xticklabels=class_names,
+        yticklabels=class_names,
+        annot_kws=annot_kws,
+    )
+    plt.ylabel("Etiqueta Real")
+    plt.xlabel("Etiqueta Predicha")
+    plt.title(f"Matriz de Confusión - Precisión total: {accuracy:.1f}%")
+    plt.show()
+
+    return all_preds, all_labels, cm

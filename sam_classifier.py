@@ -61,13 +61,25 @@ class SAM_Dataset(torch.utils.data.Dataset):
             try:
                 mel_spec = sample["mel_spec"]
             except KeyError:
-                mel_spec = None
+                mel_spec = [None]
 
             label = self.label_to_idx[sample["audio_label"]]
 
-            return audio, mel_spec, label
-        else:
-            return audio, None, label
+        return audio, mel_spec, label
+
+
+class ResampleAudio(object):
+    def __init__(self, orig_sample_rate: int, new_sample_rate: int) -> None:
+        self.orig_sample_rate = orig_sample_rate
+        self.new_sample_rate = new_sample_rate
+        self.resampler = torchaudio.transforms.Resample(
+            orig_freq=self.orig_sample_rate, new_freq=self.new_sample_rate
+        )
+
+    def __call__(self, sample) -> Dict[str, torch.Tensor]:
+        audio, audio_label = sample["audio"], sample["audio_label"]
+        audio_resampled = self.resampler(audio)
+        return {"audio": audio_resampled, "audio_label": audio_label}
 
 
 class LowpassFilter(object):
@@ -116,7 +128,11 @@ class ToMelSpectrogram(object):
             hop_length=self.hop_length,
         )
 
-        return {"audio": audio, "mel_spec": mel_spec_db, "audio_label": audio_label}
+        return {
+            "audio": audio,
+            "mel_spec": torch.Tensor(mel_spec_db),
+            "audio_label": audio_label,
+        }
 
 
 class Compose:
@@ -129,43 +145,60 @@ class Compose:
         return sample
 
 
-class SAM_CNNModel(LightningModule):
+class SAM_CNN_Model(LightningModule):
     def __init__(self, num_classes):
         super().__init__()
-        self.conv1 = torch.nn.Conv2d(1, 16, kernel_size=3, padding=1)
-        self.bn1 = torch.nn.BatchNorm2d(16)
+        self.conv1 = torch.nn.Conv2d(1, 32, kernel_size=3, padding=1)
+        self.bn1 = torch.nn.BatchNorm2d(32)
         self.pool1 = torch.nn.MaxPool2d(2)
+        self.dropout1 = torch.nn.Dropout(0.25)
 
-        self.conv2 = torch.nn.Conv2d(16, 32, kernel_size=3, padding=1)
-        self.bn2 = torch.nn.BatchNorm2d(32)
+        self.conv2 = torch.nn.Conv2d(32, 64, kernel_size=3, padding=1)
+        self.bn2 = torch.nn.BatchNorm2d(64)
         self.pool2 = torch.nn.MaxPool2d(2)
+        self.dropout2 = torch.nn.Dropout(0.25)
 
-        self.conv3 = torch.nn.Conv2d(32, 64, kernel_size=3, padding=1)
-        self.bn3 = torch.nn.BatchNorm2d(64)
-        self.pool3 = torch.nn.AdaptiveAvgPool2d((1, 1))
+        self.conv3 = torch.nn.Conv2d(64, 128, kernel_size=3, padding=1)
+        self.bn3 = torch.nn.BatchNorm2d(128)
+        self.pool3 = torch.nn.MaxPool2d(2)
+        self.dropout3 = torch.nn.Dropout(0.25)
 
-        self.fc1 = torch.nn.Linear(64, num_classes)
+        self.conv4 = torch.nn.Conv2d(128, 256, kernel_size=3, padding=1)
+        self.bn4 = torch.nn.BatchNorm2d(256)
+        self.pool4 = torch.nn.AdaptiveAvgPool2d((1, 1))
+        self.dropout4 = torch.nn.Dropout(0.25)
+
+        self.fc1 = torch.nn.Linear(256, num_classes)
 
     def forward(self, x):
-        x = x.unsqueeze(1)
+        if x.dim() == 3:
+            x = x.unsqueeze(1)
         x = self.pool1(torch.nn.functional.relu(self.bn1(self.conv1(x))))
+        x = self.dropout1(x)
         x = self.pool2(torch.nn.functional.relu(self.bn2(self.conv2(x))))
+        x = self.dropout2(x)
         x = self.pool3(torch.nn.functional.relu(self.bn3(self.conv3(x))))
+        x = self.dropout3(x)
+        x = self.pool4(torch.nn.functional.relu(self.bn4(self.conv4(x))))
+        x = self.dropout4(x)
         x = x.view(x.size(0), -1)
         x = self.fc1(x)
         return x
 
     def training_step(self, batch, batch_idx):
-        x, y = batch
+        _, x, y = batch
         logits = self(x)
-        loss = torch.nn.CrossEntropyLoss()(logits, y)
+        loss = torch.nn.functional.cross_entropy(logits, y)
+        preds = torch.argmax(logits, dim=1)
+        acc = torch.sum(preds == y).float() / len(y)
         self.log("train_loss", loss, on_epoch=True)
+        self.log("train_acc", acc, on_epoch=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
-        x, y = batch
+        _, x, y = batch
         logits = self(x)
-        loss = torch.nn.CrossEntropyLoss()(logits, y)
+        loss = torch.nn.functional.cross_entropy(logits, y)
         preds = torch.argmax(logits, dim=1)
         acc = torch.sum(preds == y).float() / len(y)
         self.log("val_loss", loss, on_epoch=True)
@@ -173,13 +206,12 @@ class SAM_CNNModel(LightningModule):
         return loss
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
-        scheduler = {
-            "scheduler": torch.optim.lr_scheduler.ReduceLROnPlateau(
-                optimizer, patience=3
-            ),
+        optimizer = torch.optim.Adam(self.parameters(), lr=0.0005, weight_decay=1e-4)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, patience=2, factor=0.5, verbose=True
+        )
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": scheduler,
             "monitor": "val_loss",
-            "interval": "epoch",
-            "frequency": 1,
         }
-        return [optimizer], [scheduler]
