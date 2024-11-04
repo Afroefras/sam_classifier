@@ -1,5 +1,4 @@
 import torch
-import torchaudio
 import numpy as np
 from typing import Union
 from torch import no_grad
@@ -62,7 +61,11 @@ def plot_mel_spectrogram(
 
 
 def plot_waveform_and_spectrograms(
-    audio: Union[np.array, torch.Tensor], sample_rate: int
+    audio: Union[np.array, torch.Tensor],
+    sample_rate: int,
+    n_mels: int = 128,
+    n_fft: int = 1024,
+    hop_length: int = 512,
 ) -> None:
     audio = np.reshape(audio, -1)
 
@@ -73,7 +76,14 @@ def plot_waveform_and_spectrograms(
     im1 = plot_fourier_spectrogram(audio, sample_rate, axs[1])
     fig.colorbar(im1, ax=axs[1], orientation="horizontal", label="Intensidad (dB)")
 
-    im2 = plot_mel_spectrogram(audio, sample_rate, axs[2])
+    im2 = plot_mel_spectrogram(
+        audio=audio,
+        sample_rate=sample_rate,
+        n_mels=n_mels,
+        n_fft=n_fft,
+        hop_length=hop_length,
+        ax=axs[2],
+    )
     fig.colorbar(im2, ax=axs[2], orientation="horizontal", label="Intensidad (dB)")
 
     plt.tight_layout()

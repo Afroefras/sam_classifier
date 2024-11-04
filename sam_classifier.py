@@ -1,5 +1,4 @@
 import torch
-import random
 import torchaudio
 from pathlib import Path
 from typing import List, Tuple, Dict
@@ -49,7 +48,7 @@ class SAM_Dataset(torch.utils.data.Dataset):
 
             self.data.extend(chunks)
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, int]:
         audio, audio_label = self.data[idx]
         label = self.label_to_idx[audio_label]
 
@@ -58,9 +57,17 @@ class SAM_Dataset(torch.utils.data.Dataset):
             sample = self.transform(sample)
 
             audio = sample["audio"]
-            label = sample["audio_label"]
 
-        return audio, label
+            try:
+                mel_spec = sample["mel_spec"]
+            except KeyError:
+                mel_spec = None
+
+            label = self.label_to_idx[sample["audio_label"]]
+
+            return audio, mel_spec, label
+        else:
+            return audio, None, label
 
 
 class LowpassFilter(object):
@@ -98,7 +105,7 @@ class ToMelSpectrogram(object):
         self.n_fft = n_fft
         self.hop_length = hop_length
 
-    def __call__(self, sample) -> Dict[torch.Tensor, str]:
+    def __call__(self, sample) -> Dict:
         audio, audio_label = sample["audio"], sample["audio_label"]
 
         mel_spec_db = AU.compute_mel_spectrogram(
@@ -109,7 +116,7 @@ class ToMelSpectrogram(object):
             hop_length=self.hop_length,
         )
 
-        return {"audio": mel_spec_db, "audio_label": audio_label}
+        return {"audio": audio, "mel_spec": mel_spec_db, "audio_label": audio_label}
 
 
 class Compose:
