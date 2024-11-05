@@ -208,7 +208,7 @@ class SAM_CNN_Model(LightningModule):
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=0.0005, weight_decay=1e-4)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, patience=2, factor=0.5, verbose=True
+            optimizer, patience=2, factor=0.5
         )
         return {
             "optimizer": optimizer,
