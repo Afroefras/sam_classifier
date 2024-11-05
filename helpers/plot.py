@@ -214,7 +214,7 @@ def plot_confusion_matrix(trained_model, dataloader):
         annot_kws=annot_kws,
     )
     plt.ylabel("Etiqueta Real")
-    plt.xlabel("Etiqueta Predicha")
+    plt.xlabel("Predicción")
     plt.title(f"Matriz de Confusión - Precisión total: {accuracy:.1f}%")
     plt.show()
 
